@@ -15,22 +15,35 @@ jobs:
       uses: webfactory/ssh-agent@v0.5.4
       with:
         ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
-    
-    - name: Deploy to Azure
+
+    - name: Stop Nginx and clear port 5000
       run: |
-        # Add Azure host to known_hosts
         ssh-keyscan -H ${{ secrets.AZURE_HOST }} >> ~/.ssh/known_hosts
-        
-        # Deploy application
+        # Stop Nginx service
+        ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "sudo systemctl stop nginx"
+        # Disable Nginx from starting at boot
+        ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "sudo systemctl disable nginx"
+        # Kill any other processes using port 5000
+        ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "sudo lsof -t -i:5000 | xargs -r sudo kill || true"
+        # Verify port is free
+        ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "sudo lsof -i:5000 || echo 'Port 5000 is free'"
+    
+    - name: Deploy application
+      run: |
         ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "mkdir -p ~/flask-app"
         scp -r ./* ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }}:~/flask-app/
-        
-        # Install necessary packages and setup Flask app
+    
+    - name: Setup and run Flask app
+      run: |
         ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "cd ~/flask-app && \
-          python3 --version && \
           sudo apt update && \
           sudo apt install -y python3-pip python3.10-venv && \
           python3 -m venv venv && \
           source venv/bin/activate && \
           pip install -r requirements.txt && \
           nohup python3 app.py > flask.log 2>&1 &"
+    
+    - name: Check app is running
+      run: |
+        ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "ps aux | grep python3"
+        ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "curl http://localhost:5000/ || echo 'App not responding on localhost'"
