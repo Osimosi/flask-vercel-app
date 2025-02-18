@@ -2,7 +2,7 @@ name: Deploy to Azure
 
 on:
   push:
-    branches: [ main ]  # Adjust if your main branch has a different name
+    branches: [ main ]
 
 jobs:
   deploy:
@@ -10,16 +10,6 @@ jobs:
     
     steps:
     - uses: actions/checkout@v2
-    
-    - name: Set up Python
-      uses: actions/setup-python@v2
-      with:
-        python-version: '3.9'
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
     
     - name: Setup SSH
       uses: webfactory/ssh-agent@v0.5.4
@@ -31,32 +21,16 @@ jobs:
         # Add Azure host to known_hosts
         ssh-keyscan -H ${{ secrets.AZURE_HOST }} >> ~/.ssh/known_hosts
         
-        # Check Python version available
-        ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "which python3 || echo 'Python3 not found'"
-        
         # Deploy application
         ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "mkdir -p ~/flask-app"
         scp -r ./* ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }}:~/flask-app/
         
-        # Install dependencies and (re)start the application using python3
+        # Install necessary packages and setup Flask app
         ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "cd ~/flask-app && \
+          python3 --version && \
+          sudo apt update && \
+          sudo apt install -y python3-pip python3.10-venv && \
           python3 -m venv venv && \
           source venv/bin/activate && \
           pip install -r requirements.txt && \
-          # This creates a systemd service if it doesn't exist
-          if [ ! -f /etc/systemd/system/flask-app.service ]; then \
-            echo '[Unit]
-            Description=Flask Application
-            After=network.target
-
-            [Service]
-            User=${{ secrets.AZURE_USERNAME }}
-            WorkingDirectory=/home/${{ secrets.AZURE_USERNAME }}/flask-app
-            ExecStart=/home/${{ secrets.AZURE_USERNAME }}/flask-app/venv/bin/gunicorn -b 0.0.0.0:5000 app:app
-            Restart=always
-
-            [Install]
-            WantedBy=multi-user.target' | sudo tee /etc/systemd/system/flask-app.service && \
-            sudo systemctl enable flask-app.service; \
-          fi && \
-          sudo systemctl restart flask-app.service"
+          nohup python3 app.py > flask.log 2>&1 &"
