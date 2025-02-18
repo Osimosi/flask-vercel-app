@@ -20,20 +20,18 @@ jobs:
       run: |
         ssh-keyscan -H ${{ secrets.AZURE_HOST }} >> ~/.ssh/known_hosts
         # Stop Nginx service
-        ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "sudo systemctl stop nginx"
+        ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "sudo systemctl stop nginx || true"
         # Disable Nginx from starting at boot
-        ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "sudo systemctl disable nginx"
+        ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "sudo systemctl disable nginx || true"
         # Kill any other processes using port 5000
         ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "sudo lsof -t -i:5000 | xargs -r sudo kill || true"
-        # Verify port is free
-        ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "sudo lsof -i:5000 || echo 'Port 5000 is free'"
     
     - name: Deploy application
       run: |
         ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "mkdir -p ~/flask-app"
         scp -r ./* ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }}:~/flask-app/
     
-    - name: Setup and run Flask app
+    - name: Setup Flask app and create systemd service
       run: |
         ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "cd ~/flask-app && \
           sudo apt update && \
@@ -41,9 +39,28 @@ jobs:
           python3 -m venv venv && \
           source venv/bin/activate && \
           pip install -r requirements.txt && \
-          nohup python3 app.py > flask.log 2>&1 &"
+          
+          # Create a systemd service file
+          echo '[Unit]
+          Description=Flask Application
+          After=network.target
+
+          [Service]
+          User=${{ secrets.AZURE_USERNAME }}
+          WorkingDirectory=/home/${{ secrets.AZURE_USERNAME }}/flask-app
+          Environment=\"PATH=/home/${{ secrets.AZURE_USERNAME }}/flask-app/venv/bin\"
+          ExecStart=/home/${{ secrets.AZURE_USERNAME }}/flask-app/venv/bin/gunicorn --bind=0.0.0.0:5000 app:app
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target' | sudo tee /etc/systemd/system/flask-app.service && \
+          
+          # Reload systemd, enable and start the service
+          sudo systemctl daemon-reload && \
+          sudo systemctl enable flask-app.service && \
+          sudo systemctl start flask-app.service"
     
-    - name: Check app is running
+    - name: Check service status
       run: |
-        ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "ps aux | grep python3"
+        ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "sudo systemctl status flask-app.service"
         ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "curl http://localhost:5000/ || echo 'App not responding on localhost'"
