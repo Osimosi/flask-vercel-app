@@ -31,13 +31,16 @@ jobs:
         # Add Azure host to known_hosts
         ssh-keyscan -H ${{ secrets.AZURE_HOST }} >> ~/.ssh/known_hosts
         
+        # Check Python version available
+        ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "which python3 || echo 'Python3 not found'"
+        
         # Deploy application
         ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "mkdir -p ~/flask-app"
         scp -r ./* ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }}:~/flask-app/
         
-        # Install dependencies and (re)start the application
+        # Install dependencies and (re)start the application using python3
         ssh ${{ secrets.AZURE_USERNAME }}@${{ secrets.AZURE_HOST }} "cd ~/flask-app && \
-          python -m venv venv && \
+          python3 -m venv venv && \
           source venv/bin/activate && \
           pip install -r requirements.txt && \
           # This creates a systemd service if it doesn't exist
